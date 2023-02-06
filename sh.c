@@ -13,10 +13,11 @@
 #define SH_TOK_DELIM " \t\r\n\a"
 
 int sh_launch(char **args){
-   int status;
+   int status,pipe_index = 0,command_index = 0,pipe_status;
    pid_t pid, wpid;
+   int p[2],previous_read_descriptor = 0;
+   pid_t pipe_pid;
    pid = fork();
-
    if(pid>0){
       pid = wait(&status);
       //printf("returned to parent process\n");  
@@ -26,21 +27,46 @@ int sh_launch(char **args){
         int i = 0;
         while(args[i]!=NULL){
             if(strcmp(args[i],">")==0){
+                dup2(previous_read_descriptor,0);
                 close(1);   
                 open(args[i+1],O_WRONLY | O_CREAT,0777);
                 args[i] = NULL;
-                execvp(args[0],args);
+                execvp(args[i-1],args);
             }
             else if(strcmp(args[i],"<")==0){
                 close(0);
                 open(args[i+1],O_RDONLY | O_CREAT,0777);
-                execvp(args[0],args+1);
+                args[i] = NULL;
+                execvp(args[i-1],args);
+            }
+            else if(strcmp(args[i],"|")==0){
+              pipe(p);
+              pipe_pid = fork();
+              if(pipe_pid == 0){
+                dup2(previous_read_descriptor,0);
+                dup2(p[1],1);
+                close(p[0]);
+                args[i] = NULL;
+                execvp(args[command_index],args+command_index);
+                exit(1);
+              }
+              else if(pipe_pid>0)
+              {
+                wait(&pipe_status);
+                printf("in parent of pipe\n");
+                close(p[1]);
+                previous_read_descriptor = p[0];
+                command_index = i+1;
+              }
             }
             i+=1;
         }
-        if(args[i]==NULL)
-            execvp(args[0],args);
-    
+        //indexes[number_of_commands] = NULL;
+        if(args[i]==NULL){
+          //dup2(stdout,1);
+          dup2(previous_read_descriptor,0);
+          execvp(args[command_index],args+command_index);
+        }
    } 
    else{
     fprintf(stderr,"fork error\n");
