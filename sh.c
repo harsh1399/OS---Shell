@@ -13,9 +13,9 @@
 #define SH_TOK_DELIM " \t\r\n\a"
 
 int sh_launch(char **args){
-   int status,pipe_index = 0,command_index = 0,pipe_status;
+   int status,pipe_index = 0,command_index = 0,pipe_status,flag=0,read_end;
    pid_t pid, wpid;
-   int p[2],previous_read_descriptor = 0;
+   int p[2],pip[2],previous_read_descriptor = 0;
    pid_t pipe_pid;
    pid = fork();
    if(pid>0){
@@ -27,17 +27,43 @@ int sh_launch(char **args){
         int i = 0;
         while(args[i]!=NULL){
             if(strcmp(args[i],">")==0){
-                dup2(previous_read_descriptor,0);
+                int desc = open(args[i-1],O_RDONLY);
+                if(desc!=-1){
+                  dup2(desc,0);
+                }else{
+                  dup2(previous_read_descriptor,0);
+                }
                 close(1);   
                 open(args[i+1],O_WRONLY | O_CREAT,0777);
                 args[i] = NULL;
-                execvp(args[i-1],args);
+                execvp(args[command_index],args+command_index);
             }
             else if(strcmp(args[i],"<")==0){
                 close(0);
                 open(args[i+1],O_RDONLY | O_CREAT,0777);
                 args[i] = NULL;
-                execvp(args[i-1],args);
+                if(args[i+2]!=NULL && strcmp(args[i+2],">")==0){
+                  close(1);
+                  open(args[i+3],O_WRONLY | O_CREAT,0777);
+                  i = i+3;
+                }
+                else if(args[i+2]!=NULL && strcmp(args[i+2],"|")==0){
+                  flag = 1;
+                  pipe(pip);
+                  i = i+2;
+                  int pid = fork();
+                  if(pid==0){
+                    dup2(pip[1],1);
+                    close(pip[0]);
+                    execvp(args[command_index],args+command_index);
+                    exit(1);
+                  }
+                  else if(pid>0){
+                    wait(&status);
+                  }
+                }
+                if(flag!=1)
+                  execvp(args[command_index],args+command_index);
             }
             else if(strcmp(args[i],"|")==0){
               pipe(p);
@@ -53,7 +79,7 @@ int sh_launch(char **args){
               else if(pipe_pid>0)
               {
                 wait(&pipe_status);
-                printf("in parent of pipe\n");
+                //printf("in parent of pipe\n");
                 close(p[1]);
                 previous_read_descriptor = p[0];
                 command_index = i+1;
@@ -64,8 +90,15 @@ int sh_launch(char **args){
         //indexes[number_of_commands] = NULL;
         if(args[i]==NULL){
           //dup2(stdout,1);
-          dup2(previous_read_descriptor,0);
-          execvp(args[command_index],args+command_index);
+            if(flag==1){
+              dup2(pip[0],0);
+              close(pip[0]);
+              close(pip[1]);
+              execvp(args[i-1],args+i-1);  
+            }
+            dup2(previous_read_descriptor,0);
+            execvp(args[command_index],args+command_index);
+          
         }
    } 
    else{
@@ -150,11 +183,6 @@ void sh_loop(void)
     line = sh_read_line();
     args = sh_split_line(line);
     status = sh_execute(args);
-    // int i=0;
-    // while(args[i]!=NULL){
-    //     printf("%s",args[i]);
-    //     i+=1;
-    // }
     free(line);
     free(args);
   } while (status);
